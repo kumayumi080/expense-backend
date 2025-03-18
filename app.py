@@ -1,72 +1,53 @@
-// Web版の経費精算システム - フロントエンド
+# 経費精算システム - バックエンド (Flask)
 
-import React, { useState } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import axios from 'axios';
+from flask import Flask, request, jsonify
+import os
+import pytesseract
+from PIL import Image
+from PyPDF2 import PdfReader
+from werkzeug.utils import secure_filename
 
-const ExpenseSystem = () => {
-  const [category, setCategory] = useState('飛行機');
-  const [file, setFile] = useState(null);
-  const [feedback, setFeedback] = useState('');
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = 'uploads'
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-  const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
-  };
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'feedback': 'ファイルが選択されていません。'}), 400
 
-  const handleSubmit = async () => {
-    if (!file) {
-      alert('ファイルを選択してください。');
-      return;
-    }
+    file = request.files['file']
+    category = request.form.get('category', '')
 
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('category', category);
+    if file.filename == '':
+        return jsonify({'feedback': '有効なファイルを選択してください。'}), 400
 
-    try {
-      const response = await axios.post('https://your-backend-url.onrender.com/api/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-      setFeedback(response.data.feedback);
-    } catch (error) {
-      console.error('エラーが発生しました。', error);
-      setFeedback('エラーが発生しました。もう一度お試しください。');
-    }
-  };
+    # ファイルの保存
+    filename = secure_filename(file.filename)
+    save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(save_path)
 
-  return (
-    <div className="p-8">
-      <Card className="p-4">
-        <CardContent>
-          <h1 className="text-xl mb-4">経費精算システム</h1>
+    feedback_message = ''
 
-          <div className="mb-4">
-            <label>カテゴリを選択:</label>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="ml-2 p-2 border rounded">
-              <option value="飛行機">飛行機</option>
-              <option value="ホテル">ホテル</option>
-              <option value="バス">バス</option>
-            </select>
-          </div>
+    try:
+        # 画像ファイルの処理
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            text = pytesseract.image_to_string(Image.open(save_path))
+            feedback_message = f'読み取った内容: {text}'
 
-          <div className="mb-4">
-            <input type="file" accept=".png, .jpg, .jpeg, .pdf" onChange={handleFileChange} />
-          </div>
+        # PDFファイルの処理
+        elif filename.lower().endswith('.pdf'):
+            reader = PdfReader(save_path)
+            text = ''.join([page.extract_text() for page in reader.pages])
+            feedback_message = f'読み取った内容: {text}'
 
-          <Button onClick={handleSubmit}>ファイルをアップロード</Button>
+        else:
+            feedback_message = '対応していないファイル形式です。'
 
-          {feedback && (
-            <div className="mt-4 p-4 border rounded bg-gray-100">
-              <pre>{feedback}</pre>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-};
+    except Exception as e:
+        feedback_message = f'エラーが発生しました: {str(e)}'
 
-export default ExpenseSystem;
+    return jsonify({'feedback': feedback_message})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
